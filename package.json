@@ -1,0 +1,31 @@
+{
+  "name": "telecommunications-churn-platform",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && tsc --noEmit -p tsconfig.worker.json && vite build",
+    "typecheck": "tsc -b --pretty false && tsc --noEmit -p tsconfig.worker.json",
+    "dev:cloudflare": "npm run build && wrangler dev",
+    "deploy": "npm run build && wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply churn-registry --local",
+    "db:migrate:remote": "wrangler d1 migrations apply churn-registry --remote"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "0.3.7",
+    "jose": "6.2.16",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261109.1",
+    "@types/node": "26.6.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.3.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.7",
+    "wrangler": "4.158.0"
+  }
+}

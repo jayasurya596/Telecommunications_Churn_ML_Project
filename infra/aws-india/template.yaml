@@ -1,0 +1,221 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: India-region FastAPI application and project data stores behind Cloudflare Access.
+
+Parameters:
+  ImageUri:
+    Type: String
+    Description: ECR image URI for the FastAPI Lambda image, built from infra/aws-india/Dockerfile.
+  PublicHostname:
+    Type: String
+    AllowedPattern: '^[a-z0-9.-]+$'
+    Description: Exact custom hostname in the owner's Cloudflare zone, such as churn.example.com.
+  AcmCertificateArn:
+    Type: String
+    AllowedPattern: '^arn:aws:acm:ap-south-1:[0-9]{12}:certificate/[A-Fa-f0-9-]+$'
+    Description: DNS-validated ACM certificate for PublicHostname in ap-south-1.
+  AccessTeamDomain:
+    Type: String
+    AllowedPattern: '^https://[a-z0-9-]+\.cloudflareaccess\.com$'
+    Description: Cloudflare Access team issuer origin.
+  AccessPolicyAudience:
+    Type: String
+    Description: Audience tag for the Access application protecting PublicHostname.
+  AccessRoleMap:
+    Type: String
+    NoEcho: true
+    Description: JSON object mapping approved lowercase email addresses to app roles.
+
+Resources:
+  RegistryTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: telecom-churn-registry
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+        RecoveryPeriodInDays: 7
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+      DeletionProtectionEnabled: true
+
+  ModelBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+
+  ModelBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ModelBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !GetAtt ModelBucket.Arn
+              - !Sub '${ModelBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+  BackendRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: IndiaChurnDataAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Scan
+                  - dynamodb:Query
+                Resource: !GetAtt RegistryTable.Arn
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub '${ModelBucket.Arn}/models/*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*'
+
+  BackendFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      PackageType: Image
+      Code:
+        ImageUri: !Ref ImageUri
+      Role: !GetAtt BackendRole.Arn
+      MemorySize: 2048
+      Timeout: 30
+      EphemeralStorage:
+        Size: 1024
+      ReservedConcurrentExecutions: 2
+      Environment:
+        Variables:
+          APP_ENV: production
+          AUTH_MODE: access_jwt
+          STORE_MODE: aws
+          AWS_DYNAMODB_TABLE: !Ref RegistryTable
+          AWS_MODEL_BUCKET: !Ref ModelBucket
+          TEAM_DOMAIN: !Ref AccessTeamDomain
+          POLICY_AUD: !Ref AccessPolicyAudience
+          ACCESS_ROLE_MAP: !Ref AccessRoleMap
+          MAX_REQUESTS_PER_MONTH: '5000'
+          MAX_MODEL_ARTIFACT_BYTES: '4194304'
+          CHURN_MODEL_DIR: /tmp/churn-models
+          CHURN_ARTIFACTS_DIR: /var/task/artifacts
+          CHURN_WEB_DIR: /var/task/web/dist
+
+  ChurnHttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: telecom-churn-india-api
+      ProtocolType: HTTP
+      Description: Churn dashboard and API, regionally served from Mumbai behind Cloudflare Access.
+
+  BackendIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ChurnHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt BackendFunction.Arn
+      PayloadFormatVersion: '2.0'
+      TimeoutInMillis: 29000
+
+  DefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ChurnHttpApi
+      RouteKey: '$default'
+      Target: !Sub 'integrations/${BackendIntegration}'
+
+  DefaultStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref ChurnHttpApi
+      StageName: '$default'
+      AutoDeploy: true
+
+  ApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref BackendFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ChurnHttpApi}/*/*/*'
+
+  ApiDomain:
+    Type: AWS::ApiGatewayV2::DomainName
+    Properties:
+      DomainName: !Ref PublicHostname
+      DomainNameConfigurations:
+        - EndpointType: REGIONAL
+          CertificateArn: !Ref AcmCertificateArn
+          SecurityPolicy: TLS_1_2
+
+  ApiMapping:
+    Type: AWS::ApiGatewayV2::ApiMapping
+    Properties:
+      ApiId: !Ref ChurnHttpApi
+      DomainName: !Ref ApiDomain
+      Stage: !Ref DefaultStage
+
+Outputs:
+  CustomDomainTarget:
+    Description: Create a proxied Cloudflare CNAME for PublicHostname pointing to this regional target.
+    Value: !GetAtt ApiDomain.RegionalDomainName
+  CustomDomainHostedZoneId:
+    Description: AWS regional hosted-zone ID for the API Gateway target.
+    Value: !GetAtt ApiDomain.RegionalHostedZoneId
+  HttpApiDefaultEndpoint:
+    Description: Direct origin endpoint; application requests still require a valid Cloudflare Access JWT.
+    Value: !GetAtt ChurnHttpApi.ApiEndpoint
+  RegistryTableName:
+    Value: !Ref RegistryTable
+  ModelBucketName:
+    Value: !Ref ModelBucket
+  BackendFunctionName:
+    Value: !Ref BackendFunction

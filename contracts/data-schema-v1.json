@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telecom-churn:schema:data-v1",
+  "title": "Synthetic telecom churn snapshot",
+  "description": "Versioned synthetic-only training and inference record schema. The target label is training-only.",
+  "$defs": {
+    "customerId": {
+      "type": "string",
+      "pattern": "^SYN-[A-Za-z0-9_-]+$",
+      "description": "Non-identifying synthetic customer key. Never a name or contact detail."
+    },
+    "features": {
+      "type": "object",
+      "properties": {
+        "customer_id": { "$ref": "#/$defs/customerId" },
+        "snapshot_date": { "type": "string", "format": "date" },
+        "tenure_months": { "type": "integer", "minimum": 0 },
+        "contract_type": { "type": "string", "enum": ["Month-to-month", "One year", "Two year"] },
+        "monthly_charges": { "type": "number", "minimum": 0 },
+        "total_charges": { "type": "number", "minimum": 0 },
+        "internet_service": { "type": "string", "enum": ["DSL", "Fiber optic", "None"] },
+        "tech_support": { "type": "boolean" },
+        "usage_gb_30d": { "type": "number", "minimum": 0 },
+        "support_calls_90d": { "type": "integer", "minimum": 0 },
+        "payment_method": {
+          "type": "string",
+          "enum": ["Electronic check", "Mailed check", "Bank transfer (automatic)", "Credit card (automatic)"]
+        },
+        "autopay_enabled": { "type": "boolean" }
+      },
+      "required": [
+        "customer_id", "snapshot_date", "tenure_months", "contract_type",
+        "monthly_charges", "total_charges", "internet_service", "tech_support",
+        "usage_gb_30d", "support_calls_90d", "payment_method", "autopay_enabled"
+      ]
+    },
+    "trainingRecord": {
+      "allOf": [
+        { "$ref": "#/$defs/features" },
+        {
+          "type": "object",
+          "properties": { "churn_next_30d": { "type": "boolean", "description": "Training label only; never an inference feature." } },
+          "required": ["churn_next_30d"]
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "inferenceSnapshot": {
+      "allOf": [{ "$ref": "#/$defs/features" }],
+      "unevaluatedProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "title": "Training row",
+      "$ref": "#/$defs/trainingRecord"
+    },
+    {
+      "title": "Inference snapshot",
+      "$ref": "#/$defs/inferenceSnapshot"
+    }
+  ]
+}

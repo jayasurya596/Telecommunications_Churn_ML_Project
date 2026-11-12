@@ -1,0 +1,50 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "telecom-churn-platform",
+  "main": "src/workers/index.ts",
+  "compatibility_date": "2026-11-08",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": false },
+  "assets": {
+    "directory": "./web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/*"]
+  },
+  "containers": [
+    {
+      "class_name": "ChurnApiContainer",
+      "image": "./Dockerfile",
+      "instance_type": "basic",
+      "max_instances": 1,
+      "constraints": { "regions": ["APAC"] },
+      "observability": { "enabled": false }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "CHURN_API", "class_name": "ChurnApiContainer" }
+    ]
+  },
+  "exports": {
+    "ChurnApiContainer": { "type": "durable-object", "storage": "sqlite" }
+  },
+  "d1_databases": [
+    {
+      "binding": "REGISTRY",
+      "database_name": "churn-registry",
+      "database_id": "a10b1fdc-bebb-4254-b600-84eacf88e0b2",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    { "binding": "MODEL_ARTIFACTS", "bucket_name": "telecom-churn-models" }
+  ],
+  "vars": {
+    "APP_ENV": "production",
+    "MAX_REQUESTS_PER_MONTH": "5000"
+  }
+}
+
+

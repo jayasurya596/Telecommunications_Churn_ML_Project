@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "telecommunications-churn-platform"
+version = "0.1.0"
+description = "Governed churn ML platform using reproducible synthetic telecom data"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+ml = ["pandas>=2.2,<4", "scikit-learn>=1.6,<2", "joblib>=1.4,<2"]
+api = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1", "httpx>=0.28,<1", "python-multipart>=0.0.20,<1"]
+app = ["pandas>=2.2,<4", "scikit-learn>=1.6,<2", "joblib>=1.4,<2", "fastapi>=0.115,<1", "uvicorn>=0.34,<1", "httpx>=0.28,<1", "python-multipart>=0.0.20,<1"]
+aws = ["boto3>=1.36,<2", "mangum>=0.19,<1", "PyJWT[crypto]>=2.10,<3"]
+cloudflare = ["PyJWT[crypto]>=2.10,<3"]
+
+[project.scripts]
+churn-platform = "churn_platform.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
